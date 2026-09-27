@@ -75,7 +75,9 @@ def merge_integrity(paths_by_split: Mapping[str, Sequence[Path]]) -> dict[str, A
     for split, paths in paths_by_split.items():
         seen: set[tuple[str, str, str]] = set(); duplicates = 0; invalid = 0; samples = []; rng = random.Random(42); visited = 0
         for path in paths:
-            columns = ["query_id", "candidate_id", "candidate_source"] + B006.PROVENANCE_COLUMNS
+            parquet_columns = set(pq.ParquetFile(path).schema.names)
+            has_stored_source = "candidate_source" in parquet_columns
+            columns = ["query_id", "candidate_id"] + (["candidate_source"] if has_stored_source else []) + B006.PROVENANCE_COLUMNS
             data = pq.read_table(path, columns=columns).to_pydict()
             for index, query_value in enumerate(data["query_id"]):
                 key = canonical_key(query_value, data["candidate_id"][index])
@@ -83,14 +85,17 @@ def merge_integrity(paths_by_split: Mapping[str, Sequence[Path]]) -> dict[str, A
                 else: seen.add(key)
                 flags = [bool(data[field][index]) for field in ("found_by_existing", "found_by_name_char", "found_by_address_word", "found_by_name_word")]
                 ranks = [data[field][index] for field in ("existing_rank", "name_char_rank", "address_word_rank", "name_word_rank")]
-                stored_source = str(data["candidate_source"][index])
+                stored_source = str(data["candidate_source"][index]) if has_stored_source else None
                 if (
-                    stored_source != key[2]
+                    (stored_source is not None and stored_source != key[2])
                     or any(flag != (rank is not None) for flag, rank in zip(flags, ranks))
                     or sum(flags) != int(data["retriever_count"][index])
                 ):
                     invalid += 1
-                sample = {"key": list(key), "stored_candidate_source": stored_source, "flags": flags, "ranks": ranks}
+                sample = {
+                    "key": list(key), "candidate_source_storage": "column" if has_stored_source else "derived_from_candidate_id_namespace",
+                    "stored_candidate_source": stored_source, "derived_candidate_source": key[2], "flags": flags, "ranks": ranks,
+                }
                 visited += 1
                 if len(samples) < 100: samples.append(sample)
                 else:
