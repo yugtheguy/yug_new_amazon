@@ -172,7 +172,7 @@ def main():
             if len(indices[c][k]) > limit:
                 del indices[c][k]
 
-    def get_candidates(sid, top_k=20):
+    def get_candidates(sid, top_k=50):
         s_keys = s1_blocking_keys[sid]
         country = s1_preprocessed[sid][4]
         c_index = indices[country]
@@ -193,7 +193,7 @@ def main():
 
     for sid in train_s1_ids:
         true_mids = train_gt.get(sid, set()) & train_target_set
-        cands = get_candidates(sid, top_k=20)
+        cands = get_candidates(sid, top_k=50)
         cand_mids = {tid: count for tid, count in cands}
 
         s1_tup = s1_preprocessed[sid][:4]
@@ -243,7 +243,7 @@ def main():
     total_val_true = sum(len(v) for v in val_gt.values())
 
     for sid in val_s1_ids:
-        cands = get_candidates(sid, top_k=20)
+        cands = get_candidates(sid, top_k=50)
         cand_ids = [tid for tid, _ in cands]
         retrieved_val_true += len(val_gt[sid] & set(cand_ids))
 

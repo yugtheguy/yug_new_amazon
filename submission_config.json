@@ -1,0 +1,41 @@
+{
+    "experiment": "B002",
+    "description": "Validation configuration approved for test inference. Candidate pool increased to 50.",
+    "code_state": {
+        "commit_hash": "a5c9bbe728db3e141acedbb67fc2af9365c8b206",
+        "modified_files": [
+            "code/business_entity_resolution/src/blocking.py",
+            "code/business_entity_resolution/src/inference.py",
+            "code/business_entity_resolution/src/main.py",
+            "train.py"
+        ],
+        "modifications_summary": "top_k=50 configured for candidate generation."
+    },
+    "pipeline_config": {
+        "candidate_top_k": 50,
+        "features_count": 32,
+        "normalization": "existing",
+        "blocking_keys": "existing",
+        "pruning": "existing",
+        "consistency_logic": "greedy_1_to_1"
+    },
+    "model": {
+        "path": "models/final_entity_matcher.joblib",
+        "type": "lightgbm",
+        "s2_threshold": 0.85,
+        "s3_threshold": 0.80
+    },
+    "paths": {
+        "input_dir": "dataset/test",
+        "input_files": [
+            "test_source1.tsv",
+            "test_source2.tsv",
+            "test_source3.tsv"
+        ],
+        "output_dir": "output",
+        "output_files": [
+            "matching_results.tsv",
+            "candidate_pairs.tsv"
+        ]
+    }
+}
