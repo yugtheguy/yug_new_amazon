@@ -13,12 +13,25 @@ import run_final_inference as inference
 
 class FinalProductionTests(unittest.TestCase):
     def test_retrieval_constants_are_frozen(self):
-        args = type("Args", (), {"source2": Path("s2"), "source3": Path("s3"), "query_chunk_size": 250, "progress_every_targets": 500000, "sparse_threads": 2})()
+        args = type("Args", (), {"source2": Path("s2"), "source3": Path("s3"), "query_chunk_size": 250, "progress_every_targets": 500000, "sparse_threads": 2, "retrievers": ("R0", "R2", "R3")})()
         frozen = inference.retrieval_args(args, Path("out"))
         self.assertEqual(50, frozen.r0_k)
         self.assertEqual(30, frozen.tfidf_k)
         self.assertEqual("char_wb", frozen.name_char_analyzer)
         self.assertEqual((3, 5), (frozen.name_char_ngram_min, frozen.name_char_ngram_max))
+        self.assertEqual(("R2_ADDRESS_WORD", "R3_NAME_WORD"), frozen.tfidf_channels)
+
+    def test_r1_is_disabled_by_default_and_absent_encoding_is_frozen(self):
+        args = inference.parse_args
+        evidence = inference.B004.empty_evidence("S1-q", "S2-c", "S2", "India")
+        evidence.update({"found_by_existing": True, "existing_rank": 1, "existing_shared_keys": 2.0, "retriever_count": 1, "rrf_score": 1.0 / 61.0})
+        values = dict(zip(inference.B006.RETRIEVAL_FEATURES, inference.B006.retrieval_feature_values(evidence, {"R0": 2.0})))
+        self.assertEqual(0.0, values["found_R1"])
+        self.assertEqual(31.0, values["R1_rank"])
+        self.assertEqual(0.0, values["R1_name_char_score"])
+        self.assertEqual(0.0, values["reciprocal_rank_R1"])
+        self.assertEqual(0.0, values["R1_name_char_best_score"])
+        self.assertEqual(0.0, values["R1_name_char_gap_from_best"])
 
     def test_official_empty_encoding_and_order(self):
         with tempfile.TemporaryDirectory() as directory:

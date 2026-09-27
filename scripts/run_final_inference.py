@@ -8,6 +8,7 @@ import collections
 import hashlib
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -38,6 +39,20 @@ class Progress:
         self.telemetry.record(event, **kwargs)
 
 
+RETRIEVER_CHANNELS = {
+    "R0": "R0_EXISTING", "R1": "R1_NAME_CHAR",
+    "R2": "R2_ADDRESS_WORD", "R3": "R3_NAME_WORD",
+}
+
+
+def parse_retrievers(value: str) -> tuple[str, ...]:
+    selected = tuple(dict.fromkeys(part.strip().upper() for part in value.split(",") if part.strip()))
+    unknown = [part for part in selected if part not in RETRIEVER_CHANNELS]
+    if unknown or "R0" not in selected:
+        raise argparse.ArgumentTypeError(f"retrievers must include R0 and use only R0,R1,R2,R3; got {value!r}")
+    return selected
+
+
 def done_valid(done: Path, artifact: Path) -> bool:
     if not done.exists() or not artifact.exists():
         return False
@@ -58,7 +73,43 @@ def retrieval_args(args: argparse.Namespace, output: Path) -> SimpleNamespace:
         name_char_ngram_min=3, name_char_ngram_max=5, name_char_max_features=1_000_000,
         address_word_max_features=750_000, name_word_max_features=500_000,
         sparse_threads=args.sparse_threads, rrf_constant=60.0,
+        tfidf_channels=tuple(RETRIEVER_CHANNELS[name] for name in args.retrievers if name != "R0"),
     )
+
+
+def load_selected_merged_chunk(
+    retrieval_dir: Path, country: str, chunk_index: int, retrievers: Sequence[str],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    paths = [retrieval_dir / "channels" / "R0_EXISTING" / country / "S2_S3" / f"chunk_{chunk_index:05d}.parquet"]
+    for retriever in retrievers:
+        if retriever == "R0":
+            continue
+        for source in ("S2", "S3"):
+            paths.append(retrieval_dir / "channels" / RETRIEVER_CHANNELS[retriever] / country / source / f"chunk_{chunk_index:05d}.parquet")
+    rows = []
+    for path in paths:
+        if not path.exists() or not path.with_suffix(".DONE").exists():
+            raise RuntimeError(f"Incomplete selected retrieval checkpoint: {path}")
+        rows.extend(B003.read_parquet_rows(path))
+    return B004.merge_provenance(rows, 60.0)
+
+
+def quarantine_disabled_r1(country_dir: Path, country: str) -> None:
+    source = country_dir / "_retrieval" / "channels" / "R1_NAME_CHAR" / country
+    if not source.exists():
+        return
+    destination = country_dir / "disabled_R1" / "R1_NAME_CHAR"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        suffix = 1
+        while destination.with_name(f"R1_NAME_CHAR_{suffix}").exists():
+            suffix += 1
+        destination = destination.with_name(f"R1_NAME_CHAR_{suffix}")
+    shutil.move(str(source), str(destination))
+    B003.atomic_json(destination / "SKIPPED_IN_FINAL.json", {
+        "status": "SKIPPED_IN_FINAL", "moved_at": B003.utc_now(),
+        "reason": "R1 disabled by final production configuration",
+    })
 
 
 def country_queries(source1: Path, country: str, limit: int | None = None) -> tuple[list[str], dict[str, tuple[str, str, str]]]:
@@ -163,14 +214,33 @@ def run_country(args: argparse.Namespace, country: str, smoke_limit: int | None 
         "country": country, "smoke_limit": smoke_limit, "query_ids_sha256": B003.sha256_ids(ids),
         "inputs": {path.name: {"size": path.stat().st_size, "sha256": B003.sha256_file(path)} for path in (args.source1, args.source2, args.source3)},
         "model_id": args.model_id, "query_chunk_size": args.query_chunk_size,
-        "retrieval": "B004:R0_K50+R1/R2/R3_K30:uncapped_union",
+        "retrieval": "B004:" + "+".join(args.retrievers) + ":uncapped_union",
     }
     run_config["fingerprint"] = hashlib.sha256(json.dumps(run_config, sort_keys=True).encode()).hexdigest()
     config_path = country_dir / "run_config.json"
     if config_path.exists():
         previous = B003.read_json(config_path)
         if previous.get("fingerprint") != run_config["fingerprint"]:
-            raise RuntimeError(f"Refusing {country} resume because inputs/configuration changed")
+            same_safe_inputs = (
+                previous.get("country") == run_config["country"]
+                and previous.get("smoke_limit") == run_config["smoke_limit"]
+                and previous.get("query_ids_sha256") == run_config["query_ids_sha256"]
+                and previous.get("inputs") == run_config["inputs"]
+                and previous.get("model_id") == run_config["model_id"]
+                and previous.get("query_chunk_size") == run_config["query_chunk_size"]
+                and "R1" not in args.retrievers
+            )
+            if not (args.resume and same_safe_inputs):
+                raise RuntimeError(f"Refusing {country} resume because inputs/configuration changed")
+            B003.atomic_json(country_dir / "run_config.pre_r1_disable.json", previous)
+            for name in ("candidates", "features", "prediction_chunks"):
+                stale = country_dir / name
+                if stale.exists():
+                    destination = country_dir / "disabled_R1" / f"derived_{name}"
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    if destination.exists():
+                        raise RuntimeError(f"Cannot quarantine stale derived checkpoint; destination exists: {destination}")
+                    shutil.move(str(stale), str(destination))
         if not args.resume:
             raise RuntimeError(f"{country} checkpoints already exist; pass --resume or use a new output directory")
     B003.atomic_json(config_path, run_config)
@@ -178,6 +248,10 @@ def run_country(args: argparse.Namespace, country: str, smoke_limit: int | None 
     norm, blocker, _ = B004.import_retrieval_modules()
     rdir = country_dir / "_retrieval"
     rargs = retrieval_args(args, rdir)
+    print(f"FINAL RETRIEVERS = {list(args.retrievers)}", flush=True)
+    print("R1 = " + ("ENABLED" if "R1" in args.retrievers else "DISABLED / SKIPPED_BY_CONFIG"), flush=True)
+    if "R1" not in args.retrievers:
+        quarantine_disabled_r1(country_dir, country)
     progress.record("country_start", country=country, processed_s1=len(ids), extra={"smoke_limit": smoke_limit})
     B004.run_r0_country(rargs, country, ids, records, norm, blocker, progress)
     B004.run_tfidf_source_country(rargs, country, "S2", args.source2, ids, records, norm, progress)
@@ -212,7 +286,7 @@ def run_country(args: argparse.Namespace, country: str, smoke_limit: int | None 
             parser_totals.update(metrics["parser"])
             semantic_missing.update(metrics.get("semantic_missing", {}))
             continue
-        merged = B005.load_merged_chunk(rdir, country, chunk_index, 60.0)
+        merged = load_selected_merged_chunk(rdir, country, chunk_index, args.retrievers)
         candidate_rows, feature_rows, parser = build_rows(chunk_ids, merged, records, targets, stats, production, feature_schema)
         B003.write_parquet(candidate_path, candidate_rows); mark_done(candidate_path.with_suffix(".DONE"), candidate_path, {"rows": len(candidate_rows)})
         B003.write_parquet(feature_path, feature_rows); mark_done(feature_path.with_suffix(".DONE"), feature_path, {"rows": len(feature_rows)})
@@ -291,6 +365,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--country", action="append", help="Repeat for independently runnable countries; default discovers all countries")
     parser.add_argument("--smoke-france", type=int, default=0); parser.add_argument("--model-id", choices=("B007_03", "B007_01"), default="B007_03")
     parser.add_argument("--resume", action="store_true"); parser.add_argument("--query-chunk-size", type=int, default=250)
+    parser.add_argument("--retrievers", type=parse_retrievers, default=parse_retrievers("R0,R2,R3"), help="Comma-separated retrieval channels; tonight's default is R0,R2,R3")
     parser.add_argument("--progress-every-targets", type=int, default=500_000); parser.add_argument("--sparse-threads", type=int, default=max(1, os.cpu_count() or 1))
     return parser.parse_args()
 

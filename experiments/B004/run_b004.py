@@ -324,8 +324,11 @@ def run_tfidf_source_country(
     norm: Any,
     telemetry: Any,
 ) -> None:
+    selected_channels = tuple(getattr(
+        args, "tfidf_channels", ("R1_NAME_CHAR", "R2_ADDRESS_WORD", "R3_NAME_WORD")
+    ))
     pending_channels = [
-        channel for channel in ("R1_NAME_CHAR", "R2_ADDRESS_WORD", "R3_NAME_WORD")
+        channel for channel in selected_channels
         if not all_chunks_done(
             args.output_dir, channel, country, source,
             len(query_ids), args.query_chunk_size,
