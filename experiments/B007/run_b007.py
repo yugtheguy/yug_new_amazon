@@ -267,11 +267,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     for split in ("train", "calibration", "evaluation"):
         queries, candidates, _ = row_ids[split]
         count = len(queries)
-        b007_matrix = np.empty((count, len(B007.B007_FEATURE_NAMES)), dtype=np.float32)
-        for i, (q, c) in enumerate(zip(queries, candidates)):
-            if i > 0 and i % 500000 == 0:
-                telemetry.record("b007_feature_generation_progress", extra={"split": split, "rows": i})
-            b007_matrix[i] = B007.generate_features(q, c, texts, stats)
+        cache_path = args.output_dir / f"b007_features_{split}.npy"
+        if cache_path.exists():
+            telemetry.record("b007_feature_generation_cache_hit", extra={"split": split})
+            b007_matrix = np.load(cache_path)
+        else:
+            b007_matrix = np.empty((count, len(B007.B007_FEATURE_NAMES)), dtype=np.float32)
+            for i, (q, c) in enumerate(zip(queries, candidates)):
+                if i > 0 and i % 500000 == 0:
+                    telemetry.record("b007_feature_generation_progress", extra={"split": split, "rows": i})
+                b007_matrix[i] = B007.generate_features(q, c, texts, stats)
+            np.save(cache_path, b007_matrix)
         matrices[split] = np.hstack((matrices[split], b007_matrix))
     telemetry.record("b007_feature_generation_done")
 
