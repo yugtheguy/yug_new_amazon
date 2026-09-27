@@ -33,8 +33,31 @@ class Progress:
     def __init__(self, path: Path):
         self.telemetry = B003.Telemetry(path)
         self.started = time.monotonic()
+        self.total_s1 = 0
+        self.stage_samples: dict[tuple[str, str, str], tuple[float, int]] = {}
 
     def record(self, event: str, **kwargs: Any) -> None:
+        extra = dict(kwargs.get("extra") or {})
+        processed = kwargs.get("processed_s1")
+        if processed is not None and self.total_s1 and event.endswith("chunk_done"):
+            key = (str(kwargs.get("country", "")), str(extra.get("source", "S2_S3")), str(extra.get("channel", event)))
+            now = time.monotonic()
+            first_time, first_processed = self.stage_samples.setdefault(key, (now, int(processed)))
+            elapsed = max(0.0, now - first_time)
+            completed = max(0, int(processed) - first_processed)
+            qps = completed / elapsed if elapsed > 0 and completed > 0 else None
+            extra.update({
+                "total_s1": self.total_s1,
+                "queries_per_sec": None if qps is None else round(qps, 2),
+                "estimated_remaining_seconds": None if qps is None else round(max(0, self.total_s1 - int(processed)) / qps, 1),
+                "elapsed_seconds": round(elapsed, 1),
+            })
+            try:
+                import psutil  # type: ignore
+                extra["rss_gib"] = round(psutil.Process().memory_info().rss / (1024 ** 3), 2)
+            except ImportError:
+                pass
+            kwargs["extra"] = extra
         print(f"[{B003.utc_now()}] FINAL {event} | " + " | ".join(f"{k}={v}" for k, v in kwargs.items()), flush=True)
         self.telemetry.record(event, **kwargs)
 
@@ -210,6 +233,7 @@ def run_country(args: argparse.Namespace, country: str, smoke_limit: int | None 
     country_dir.mkdir(parents=True, exist_ok=True)
     progress = Progress(country_dir / "telemetry.jsonl")
     ids, records = country_queries(args.source1, country, smoke_limit)
+    progress.total_s1 = len(ids)
     run_config = {
         "country": country, "smoke_limit": smoke_limit, "query_ids_sha256": B003.sha256_ids(ids),
         "inputs": {path.name: {"size": path.stat().st_size, "sha256": B003.sha256_file(path)} for path in (args.source1, args.source2, args.source3)},
