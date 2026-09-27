@@ -19,7 +19,7 @@ DATA_ROOT="/kaggle/input/datasets/lokeshgile/student-resource-amazonml/student_r
 
 python experiments/B007/run_b007.py \
     --b005-artifacts artifacts/experiments/B005 \
-    --b005-metadata artifacts/experiments/B005/model_metadata.json \
+    --b005-metadata models/experiments/B005/metadata.json \
     --source1 $DATA_ROOT/train_source1.tsv \
     --source2 $DATA_ROOT/train_source2.tsv \
     --source3 $DATA_ROOT/train_source3.tsv \
