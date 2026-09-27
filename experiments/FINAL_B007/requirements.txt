@@ -1,0 +1,4 @@
+-r ../B007/requirements.txt
+sparse-dot-topn
+pyarrow
+joblib
