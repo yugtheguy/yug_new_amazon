@@ -9,12 +9,14 @@ reported but never inserted into the primary training matrix.
 from __future__ import annotations
 
 import argparse
+import atexit
 import collections
 import hashlib
 import json
 import os
 import platform
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
@@ -24,6 +26,37 @@ import numpy as np
 EXPERIMENT_ID = "B005"
 EXPECTED_B004 = {"recall": 0.974627, "oracle_f05": 0.991071, "pairs": 875_027}
 FEATURE_PREFIX = "f_"
+
+
+class Heartbeat:
+    """Print a periodic liveness line while long CPU-bound stages are running."""
+
+    def __init__(self, seconds: int) -> None:
+        self.seconds = seconds
+        self.started = time.monotonic()
+        self.stage = "initializing"
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="b005-heartbeat", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def update(self, stage: str) -> None:
+        self.stage = stage
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(timeout=1.0)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.seconds):
+            elapsed = time.monotonic() - self.started
+            print(
+                f"[{B003.utc_now()}] B005 HEARTBEAT | still running | "
+                f"stage={self.stage} | elapsed={elapsed:.0f}s",
+                flush=True,
+            )
 
 
 def repo_root() -> Path:
@@ -564,8 +597,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.model_dir.mkdir(parents=True, exist_ok=True)
     telemetry = B003.Telemetry(args.output_dir / "telemetry.jsonl")
+    heartbeat = Heartbeat(args.heartbeat_seconds)
+    heartbeat.start()
+    atexit.register(heartbeat.stop)
     original_record = telemetry.record
     def progress(event: str, **kwargs: Any) -> None:
+        heartbeat.update(event)
         print(f"[{B003.utc_now()}] B005 {event} | " + " | ".join(f"{k}={v}" for k, v in kwargs.items()), flush=True)
         original_record(event, **kwargs)
     telemetry.record = progress
@@ -760,6 +797,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Frozen retrieval: {retrieval_verification}", flush=True)
     print(f"Device: {device} | thresholds S2={t2:.3f} S3={t3:.3f}", flush=True)
     print(f"Frozen Macro F0.5={overall['macro_f05']:.6f} precision={overall['global_precision']:.6f} recall={overall['global_recall']:.6f}", flush=True)
+    heartbeat.stop()
     return 0
 
 
@@ -773,6 +811,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/experiments/B005")); parser.add_argument("--model-dir", type=Path, default=Path("models/experiments/B005"))
     parser.add_argument("--b004-eval-dir", type=Path, default=None, help="Optional completed B004 artifact directory for the frozen 5k evaluation cache")
     parser.add_argument("--resume", action="store_true"); parser.add_argument("--device", choices=("auto", "gpu", "cpu"), default="auto")
+    parser.add_argument("--heartbeat-seconds", type=int, default=30, help="Print a liveness update this often during long stages")
     parser.add_argument("--query-chunk-size", type=int, default=250); parser.add_argument("--progress-every-targets", type=int, default=500_000)
     parser.add_argument("--r0-k", type=int, default=50); parser.add_argument("--r0-name-prune", type=int, default=300); parser.add_argument("--r0-addr-prune", type=int, default=150)
     parser.add_argument("--tfidf-k", type=int, default=30); parser.add_argument("--tfidf-min-score", type=float, default=1e-6); parser.add_argument("--tfidf-min-df", type=int, default=2)
@@ -794,7 +833,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     changed = [name for name, expected in frozen.items() if getattr(args, name) != expected]
     if changed:
         parser.error("B005 freezes all B004 retrieval parameters; changed: " + ", ".join(changed))
-    if args.train_limit <= 0 or args.max_negatives_per_s1 <= 0 or args.query_chunk_size <= 0:
+    if args.train_limit <= 0 or args.max_negatives_per_s1 <= 0 or args.query_chunk_size <= 0 or args.heartbeat_seconds <= 0:
         parser.error("limits and chunk size must be positive")
     if not 0 < args.calibration_fraction < 0.5:
         parser.error("--calibration-fraction must be between 0 and 0.5")

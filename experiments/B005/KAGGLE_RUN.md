@@ -19,7 +19,9 @@ python -m pip install -r experiments/B005/requirements.txt
 ## 3. Run the complete pipeline
 
 The command prints live progress for target scans, TF-IDF retrieval, checkpoints,
-feature extraction, GPU/CPU model fitting, calibration, and evaluation.
+feature extraction, GPU/CPU model fitting, calibration, and evaluation. A heartbeat
+also prints the current stage and elapsed time every 30 seconds, including while a
+single long operation is still running. Change it with `--heartbeat-seconds`.
 
 ```bash
 cd /kaggle/working/amazon_ml

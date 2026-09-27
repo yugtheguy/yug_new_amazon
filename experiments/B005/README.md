@@ -19,3 +19,6 @@ The runner stops before training unless the frozen validation retrieval reproduc
 recall `0.974627`, oracle Macro F0.5 `0.991071`, and exactly `875,027` pairs.
 Thresholds are selected only on the internal calibration split, and every threshold
 trial uses production target uniqueness.
+
+The runner flushes event logs immediately and emits a 30-second liveness heartbeat
+throughout long retrieval, preprocessing, feature extraction, and training stages.
