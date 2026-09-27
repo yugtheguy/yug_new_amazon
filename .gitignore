@@ -39,6 +39,9 @@ video_analysis/
 *.tsv
 output/*.tsv
 
+# Reproducible experiment outputs (Parquet candidates, scores, reports)
+artifacts/experiments/B003/
+
 # Output exceptions to keep
 !output/final_report.txt
 !output/.gitkeep
