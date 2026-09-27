@@ -128,7 +128,7 @@ def run_ablation(
         
     telemetry.record("ablation_start", candidate_pairs=len(X_train), extra={"name": name, "feature_count": len(feature_names)})
     model, device, _ = B006.fit_model(args, production, model_params, X_train, labels["train"], telemetry)
-    feature_importances = list(zip(feature_names, model.booster_.feature_importance(importance_type="gain")))
+    feature_importances = list(zip(feature_names, model.model.booster_.feature_importance(importance_type="gain")))
     feature_importances.sort(key=lambda x: -x[1])
     
     del X_train
