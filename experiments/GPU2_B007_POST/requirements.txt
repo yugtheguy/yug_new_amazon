@@ -1,0 +1,2 @@
+-r ../B006/requirements.txt
+pandas>=2.1
