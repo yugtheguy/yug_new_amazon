@@ -1,6 +1,6 @@
 {
-  "optimal_s2_threshold": 0.75,
-  "optimal_s3_threshold": 0.85,
+  "optimal_s2_threshold": 0.85,
+  "optimal_s3_threshold": 0.80,
   "validation_f05": 0.9761051983285939,
   "validation_precision": 0.9924073516119313,
   "validation_recall": 0.9454075774971298,

@@ -105,7 +105,7 @@ def build_inverted_index_for_country(target_records, name_prune=300, addr_prune=
     return index
 
 
-def retrieve_candidates_for_s1(rname, raddr, rcountry, inverted_index, top_k=20):
+def retrieve_candidates_for_s1(rname, raddr, rcountry, inverted_index, top_k=50):
     """
     Given an S1 record and the country inverted index, returns [(tid, shared_key_count), ...]
     """

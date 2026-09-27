@@ -14,7 +14,7 @@ from thresholding import apply_threshold_and_deduplication
 from output import write_submission_tsv, write_final_report
 
 
-def run_test_inference(test_dir, model_path, meta_path, output_dir, batch_size=5000, top_k=15):
+def run_test_inference(test_dir, model_path, meta_path, output_dir, batch_size=5000, top_k=50):
     """
     Runs end-to-end entity resolution inference on the complete test dataset.
     Processes data country-by-country to maintain low memory footprint (<2GB RAM).
