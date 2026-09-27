@@ -42,6 +42,8 @@ output/*.tsv
 # Reproducible experiment outputs (Parquet candidates, scores, reports)
 artifacts/experiments/B003/
 artifacts/experiments/B004/
+artifacts/experiments/B005/
+models/experiments/B005/
 
 # Output exceptions to keep
 !output/final_report.txt
