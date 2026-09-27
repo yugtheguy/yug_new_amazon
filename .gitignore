@@ -46,6 +46,7 @@ artifacts/experiments/B005/
 models/experiments/B005/
 artifacts/experiments/B006/
 models/experiments/B006/
+artifacts/experiments/B006A/
 
 # Output exceptions to keep
 !output/final_report.txt
