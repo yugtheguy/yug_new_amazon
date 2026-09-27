@@ -1,0 +1,4 @@
+-r ../B006/requirements.txt
+catboost>=1.2,<2
+xgboost>=2.0,<4
+pandas>=2.1
