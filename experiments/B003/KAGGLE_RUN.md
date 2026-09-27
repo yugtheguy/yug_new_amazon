@@ -82,6 +82,10 @@ PYTHONHASHSEED=0 python experiments/B003/run_b003.py \
 
 ## 7. Inspect progress
 
+The running cell prints live `[B003 +...s]` updates during target scans, index
+construction, candidate chunks, strict validation, and final evaluation. You can
+also inspect the durable telemetry stream from another cell:
+
 ```bash
 tail -n 20 "$OUT/telemetry.jsonl"
 find "$OUT/raw_candidates" -name '*.DONE' | wc -l

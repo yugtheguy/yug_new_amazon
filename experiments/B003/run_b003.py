@@ -178,6 +178,21 @@ class Telemetry:
             event.update(extra)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
+        rss_text = f"{rss / (1024 ** 3):.2f} GiB" if rss is not None else "NA"
+        available_text = f"{available / (1024 ** 3):.2f} GiB" if available is not None else "NA"
+        country_text = f" country={country}" if country is not None else ""
+        progress_text = ""
+        if processed_s1 or candidate_pairs:
+            progress_text = f" processed_s1={processed_s1:,} pairs={candidate_pairs:,}"
+        extra_text = ""
+        if extra:
+            visible = ", ".join(f"{key}={value}" for key, value in extra.items())
+            extra_text = f" {visible}"
+        print(
+            f"[B003 +{event['wall_seconds']:.1f}s] {stage}{country_text}{progress_text} "
+            f"rss={rss_text} available={available_text}{extra_text}",
+            flush=True,
+        )
         return event
 
 
@@ -234,14 +249,26 @@ def load_validation_records(
 
 
 def load_targets_for_country(
-    source2: Path, source3: Path, country: str
+    source2: Path,
+    source3: Path,
+    country: str,
+    progress: Callable[[Path, int, int], None] | None = None,
+    progress_every: int = 500_000,
 ) -> dict[str, tuple[str, str, str]]:
     """Match production semantics: S2 then S3 into one insertion-ordered dict."""
     targets: dict[str, tuple[str, str, str]] = {}
     for source_path in (source2, source3):
+        scanned = 0
+        matched = 0
         for entity_id, name, address, record_country in iter_tsv(source_path):
+            scanned += 1
             if record_country == country:
                 targets[entity_id] = (name, address, record_country)
+                matched += 1
+            if progress and scanned % progress_every == 0:
+                progress(source_path, scanned, matched)
+        if progress:
+            progress(source_path, scanned, matched)
     return targets
 
 
@@ -259,15 +286,21 @@ def build_production_index(
     get_blocking_keys: Callable[[str, str, str], set[tuple[str, str]]],
     name_prune: int,
     addr_prune: int,
+    progress: Callable[[int, int], None] | None = None,
+    progress_every: int = 250_000,
 ) -> tuple[dict[str, tuple[str, str, str, set[str]]], dict[tuple[str, str], list[str]], int]:
     target_preprocessed: dict[str, tuple[str, str, str, set[str]]] = {}
     index: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
-    for target_id, (name, address, country) in targets.items():
+    for processed, (target_id, (name, address, country)) in enumerate(targets.items(), start=1):
         clean_name, core_name, _ = normalize_name(name)
         clean_address, numbers, _ = normalize_address(address)
         target_preprocessed[target_id] = (clean_name, core_name, clean_address, numbers)
         for key in get_blocking_keys(name, address, country):
             index[key].append(target_id)
+        if progress and processed % progress_every == 0:
+            progress(processed, len(index))
+    if progress:
+        progress(len(targets), len(index))
     pruned = 0
     for key in list(index.keys()):
         if len(index[key]) > prune_limit(key, name_prune, addr_prune):
@@ -705,12 +738,28 @@ def generate_country_candidates(
         return {"country": country, "resumed": True, "chunks": len(chunks)}
 
     telemetry.record("load_targets_start", country=country)
-    targets = load_targets_for_country(args.source2, args.source3, country)
+    targets = load_targets_for_country(
+        args.source2,
+        args.source3,
+        country,
+        progress=lambda source_path, scanned, matched: telemetry.record(
+            "target_scan_progress",
+            country=country,
+            extra={"source": source_path.name, "rows_scanned": scanned, "country_rows": matched},
+        ),
+        progress_every=args.progress_every_targets,
+    )
     telemetry.record("load_targets_done", country=country, extra={"target_records": len(targets)})
     norm = production["norm"]
     target_preprocessed, index, pruned = build_production_index(
         targets, norm.normalize_name, norm.normalize_address,
         production["get_blocking_keys"], args.name_prune, args.addr_prune,
+        progress=lambda processed, active_keys: telemetry.record(
+            "index_build_progress",
+            country=country,
+            extra={"targets_processed": processed, "unpruned_keys": active_keys},
+        ),
+        progress_every=args.progress_every_targets,
     )
     telemetry.record(
         "index_built", country=country,
@@ -865,9 +914,21 @@ def evaluate_b003(
         for entity_id, query_rows in rows_by_query.items()
     }
     candidate_universe = set().union(*candidates_by_query.values()) if candidates_by_query else set()
+    telemetry.record(
+        "strict_candidate_validation_start",
+        processed_s1=len(selected_ids),
+        candidate_pairs=len(rows),
+        extra={"unique_candidate_targets": len(candidate_universe)},
+    )
     existence_report = validate_candidate_existence(
         candidate_universe, args.source2, args.source3,
         check_existence=not args.skip_strict_id_check,
+    )
+    telemetry.record(
+        "strict_candidate_validation_done",
+        processed_s1=len(selected_ids),
+        candidate_pairs=len(rows),
+        extra={"status": existence_report["status"]},
     )
     results["strict_candidate_validation"] = existence_report
     apply_dedup = production["apply_threshold_and_deduplication"]
@@ -993,6 +1054,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--name-prune", type=int, default=300)
     parser.add_argument("--addr-prune", type=int, default=150)
     parser.add_argument("--near-tie-margin", type=float, default=0.05)
+    parser.add_argument(
+        "--progress-every-targets", type=int, default=500_000,
+        help="Print target scan/index progress after this many rows",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--hash-inputs", action="store_true")
     parser.add_argument("--skip-strict-id-check", action="store_true")
@@ -1000,8 +1065,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.top_k != 50:
         parser.error("B003 is frozen at --top-k 50")
-    if args.val_limit <= 0 or args.chunk_size <= 0:
-        parser.error("--val-limit and --chunk-size must be positive")
+    if args.val_limit <= 0 or args.chunk_size <= 0 or args.progress_every_targets <= 0:
+        parser.error("--val-limit, --chunk-size, and --progress-every-targets must be positive")
     return args
 
 
@@ -1023,6 +1088,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Manifest written: {manifest_path}")
         return 0
 
+    print("[B003] Loading production modules and both frozen models...", flush=True)
     production = import_production(repo_root)
     model_a = production["EntityMatcherModel"].load(str(args.model_a))
     model_b = production["EntityMatcherModel"].load(str(args.model_b))
@@ -1045,6 +1111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     telemetry = Telemetry(args.output_dir / "telemetry.jsonl")
     telemetry.record("start", extra={"gpu_inventory": manifest["gpu_inventory"]})
+    print(f"[B003] Loading {len(selected_ids):,} selected validation S1 records...", flush=True)
     validation_records, country_to_ids = load_validation_records(args.source1, selected_ids)
     manifest["validation_country_counts"] = {country: len(ids) for country, ids in country_to_ids.items()}
     atomic_json(manifest_path, manifest)

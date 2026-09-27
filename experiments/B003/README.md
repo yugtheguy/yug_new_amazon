@@ -27,6 +27,12 @@ Key files:
 - `diagnostic_candidates/<country>/`: post-generation candidates annotated with GT
 - `B003.DONE`: successful completion marker
 
+The runner also prints flushed live progress to the notebook console while scanning
+each target source, building each country index, completing validation chunks,
+validating target IDs, and computing final metrics. Each line includes elapsed time,
+RSS, and available RAM. The default target/index update interval is 500,000 rows and
+can be changed with `--progress-every-targets` without affecting experiment semantics.
+
 ## Semantic constraints
 
 - `--top-k` is accepted for transparency but B003 rejects values other than 50.
