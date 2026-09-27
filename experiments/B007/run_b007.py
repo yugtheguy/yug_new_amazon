@@ -253,7 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for eid, name, address, _ in B003.iter_tsv(path):
             count += 1
             if count % 1000000 == 0:
-                telemetry.record("text_extraction_progress", path=path.name, rows=count)
+                telemetry.record("text_extraction_progress", extra={"path": path.name, "rows": count})
             stats.add(name, address)
             if eid in valid_ids:
                 texts[eid] = (name, address)
@@ -261,7 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_source(args.source1, required_s1)
     load_source(args.source2, required_s2_s3)
     load_source(args.source3, required_s2_s3)
-    telemetry.record("text_extraction_done", loaded_pairs=len(texts), corpus_docs=stats.doc_count)
+    telemetry.record("text_extraction_done", extra={"loaded_pairs": len(texts), "corpus_docs": stats.doc_count})
 
     # Compute B007 Features
     for split in ("train", "calibration", "evaluation"):
@@ -270,7 +270,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         b007_matrix = np.empty((count, len(B007.B007_FEATURE_NAMES)), dtype=np.float32)
         for i, (q, c) in enumerate(zip(queries, candidates)):
             if i > 0 and i % 500000 == 0:
-                telemetry.record("b007_feature_generation_progress", split=split, rows=i)
+                telemetry.record("b007_feature_generation_progress", extra={"split": split, "rows": i})
             b007_matrix[i] = B007.generate_features(q, c, texts, stats)
         matrices[split] = np.hstack((matrices[split], b007_matrix))
     telemetry.record("b007_feature_generation_done")
