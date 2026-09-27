@@ -308,10 +308,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "total_fn": best["fn"], "total_fp": best["fp"],
     }
     eval_truth = {query_id: truth[query_id] for query_id in split_ids["evaluation"]}
+    eval_queries, eval_candidates, _eval_countries = row_ids["evaluation"]
+    eval_pair_rows = {
+        (query_id, candidate_id): row_index
+        for row_index, (query_id, candidate_id) in enumerate(zip(eval_queries, eval_candidates))
+    }
+    if len(eval_pair_rows) != len(eval_queries):
+        raise RuntimeError("Duplicate (query_id, candidate_id) rows in evaluation matrix")
+
+    def features_for_pair(query_id: str, candidate_id: str) -> dict[str, float]:
+        row_index = eval_pair_rows.get((query_id, candidate_id))
+        if row_index is None:
+            return {}
+        return dict(zip(ALL_FEATURES, matrices["evaluation"][row_index]))
+
     for q_id, expected in eval_truth.items():
         predicted = eval_predictions_for_best.get(q_id, set())
         for c_id in predicted - expected: # FP
-            f = dict(zip(ALL_FEATURES, matrices["evaluation"][row_ids["evaluation"][0].index(q_id) + row_ids["evaluation"][1].index(c_id)])) if c_id in row_ids["evaluation"][1] else {}
+            f = features_for_pair(q_id, c_id)
             if f:
                 if f.get("premise_conflict") == 1.0: error_analysis["premise_conflict"] += 1
                 if f.get("postal_conflict") == 1.0: error_analysis["postal_conflict"] += 1
@@ -319,7 +333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if f.get("strong_name_premise_conflict") == 1.0: error_analysis["strong_name_premise_conflict"] += 1
                 if f.get("address_missing_one_side") == 1.0: error_analysis["missing_address_error"] += 1
         for c_id in expected - predicted: # FN
-            f = dict(zip(ALL_FEATURES, matrices["evaluation"][row_ids["evaluation"][0].index(q_id) + row_ids["evaluation"][1].index(c_id)])) if c_id in row_ids["evaluation"][1] else {}
+            f = features_for_pair(q_id, c_id)
             if f:
                 if f.get("premise_conflict") == 1.0: error_analysis["premise_conflict"] += 1
                 if f.get("postal_conflict") == 1.0: error_analysis["postal_conflict"] += 1
