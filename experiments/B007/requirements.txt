@@ -1,0 +1,1 @@
+-r ../B006/requirements.txt
