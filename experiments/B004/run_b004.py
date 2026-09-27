@@ -867,6 +867,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     B003.atomic_json(manifest_path, run_manifest)
 
     telemetry = B003.Telemetry(args.output_dir / "telemetry.jsonl")
+    original_record = telemetry.record
+    def printing_record(event: str, **kwargs: Any) -> None:
+        print(f"[{B003.utc_now()}] PROGRESS: {event} | " + " | ".join(f"{k}={v}" for k, v in kwargs.items()), flush=True)
+        original_record(event, **kwargs)
+    telemetry.record = printing_record
     telemetry.record("start")
     norm, get_blocking_keys, evaluate_predictions = import_retrieval_modules()
     validation_records, country_to_ids = load_selected_records(args.source1, selected_ids)
